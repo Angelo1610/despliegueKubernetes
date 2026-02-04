@@ -1,0 +1,177 @@
+networks:
+  microservices-network:
+    driver: bridge
+
+services:
+  # === BASE DE DATOS PRINCIPAL ===
+  db:
+    container_name: postgres-db
+    image: postgres:15
+    environment:
+      POSTGRES_DB: db_parkin_users
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: angelo16
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d db_parkin_users"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === BASE DE DATOS DE KONG ===
+  kong-db:
+    container_name: kong-postgres
+    image: postgres:15
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kong
+    ports:
+      - "5433:5432"
+    volumes:
+      - kong_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === MIGRACIÓN DE KONG ===
+  kong-migration:
+    container_name: kong-migration
+    image: kong/kong-gateway:3.4
+    command: "kong migrations bootstrap"
+    depends_on:
+      kong-db:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-db
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+      KONG_PG_DATABASE: kong
+    networks:
+      - microservices-network
+
+  # === KONG GATEWAY ===
+  kong:
+    container_name: kong-gateway
+    image: kong/kong-gateway:3.4
+    depends_on:
+      kong-migration:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"   # Proxy HTTP
+      - "8443:8443"   # Proxy HTTPS
+      - "8001:8001"   # Admin API
+      - "8444:8444"   # Admin API HTTPS
+    volumes:
+      - ./kong-declarative.yml:/kong/declarative/kong.yml
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-db
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+    networks:
+      - microservices-network
+
+  # === MICROSERVICIO 1: ZONE CORE ===
+  zone-core:
+    container_name: zone-core
+    build:
+      context: ../zone_core
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/db_parkin_users
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: angelo16
+      SERVER_PORT: 8080
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # === MICROSERVICIO 2: CLIENTES ===
+  ms-clientes:
+    container_name: ms-clientes
+    build:
+      context: ../ms-clientes
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/db_parkin_users
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: angelo16
+      SERVER_PORT: 8083
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # === MICROSERVICIO 3: TICKETS ===
+  ms-tickets:
+    container_name: ms-tickets
+    build:
+      context: C:/Users/sanch/OneDrive/Documentos/SEPTIMO/Distribuidas/ms-tickets
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: angelo16
+      DB_NAME: db_parkin_users
+      ZONE_SERVICE_URL: http://zone-core:8080
+      PERSONA_SERVICE_URL: http://ms-clientes:8083
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # === MICROSERVICIO 4: NOTIFICACIONES ===
+  notification-service:
+    container_name: notification-service
+    build:
+      context: ../notificacion-service
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:angelo16@db:5432/db_parkin_users
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  kong_data:

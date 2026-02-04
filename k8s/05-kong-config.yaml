@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-declarative-config
+  namespace: microservices
+data:
+  kong.yml: |
+    _format_version: "3.0"
+    _transform: true
+
+    services:
+      - name: zone-core-service
+        url: http://zone-core-service:8080
+        routes:
+          - name: zone-route
+            paths:
+              - ~/api/v1/zones
+            strip_path: false
+
+      - name: ms-clientes-service
+        url: http://ms-clientes-service:8083
+        routes:
+          - name: personas-route
+            paths:
+              - ~/api/v1/personas
+            strip_path: false
+
+          - name: vehiculos-route
+            paths:
+              - ~/api/v1/vehiculos
+            strip_path: false
+
+      - name: ms-tickets-service
+        url: http://ms-tickets-service:4000
+        routes:
+          - name: tickets-route
+            paths:
+              - ~/api/v1/tickets
+            strip_path: false
+
+      - name: notification-service
+        url: http://notification-service:3001
+        routes:
+          - name: notifications-route
+            paths:
+              - ~/api/v1/notifications
+            strip_path: false
+
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - Authorization
+          exposed_headers:
+            - "*"
+          credentials: true
+          max_age: 3600
+
+      - name: rate-limiting
+        config:
+          minute: 100
+          hour: 1000
+          policy: local
